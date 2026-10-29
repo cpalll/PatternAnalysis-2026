@@ -14,7 +14,7 @@ Workflow
        compute cost (params, peak VRAM, latency)
     7. Save checkpoint, history, metrics, per-patient test predictions and plots
 
-Outputs (in --out-dir)
+Outputs (in a new numbered folder <--out-dir>/run_NNN, e.g. runs/run_001)
     best.pt / last.pt          checkpoints (best.pt also stores the fitted temperature)
     history.csv                per-epoch metrics
     training_curves.png        redrawn after every epoch
@@ -24,7 +24,7 @@ Outputs (in --out-dir)
 
 Example
     python train.py --root /home/groups/comp3710/ADNI/AD_NC --model gfnet-xs \
-        --epochs 60 --batch-size 64 --cache
+        --epochs 60 --batch-size 64 --cache        # -> runs/run_001, runs/run_002, ...
 """
 
 import argparse
@@ -32,6 +32,7 @@ import csv
 import json
 import math
 import random
+import re
 import time
 from pathlib import Path
 
@@ -80,7 +81,8 @@ def get_args(argv=None):
     p.add_argument("--patience", type=int, default=15, help="early-stopping patience (epochs)")
     # misc
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--out-dir", default="runs/gfnet")
+    p.add_argument("--out-dir", default="runs",
+                   help="parent folder; each run is saved to a new <out-dir>/run_NNN")
     p.add_argument("--limit-batches", type=int, default=0,
                    help="debug: cap batches per epoch (0 = no limit)")
     return p.parse_args(argv)
@@ -93,6 +95,23 @@ def set_seed(seed: int) -> None:
     random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+
+
+def next_run_dir(parent, prefix: str) -> Path:
+    """Create and return the next numbered folder <parent>/<prefix>_NNN
+    (run_001, run_002, ...) so earlier results are never overwritten."""
+    parent = Path(parent)
+    parent.mkdir(parents=True, exist_ok=True)
+    nums = [int(m.group(1)) for d in parent.iterdir()
+            if d.is_dir() and (m := re.fullmatch(rf"{prefix}_(\d+)", d.name))]
+    n = max(nums, default=0) + 1
+    while True:
+        path = parent / f"{prefix}_{n:03d}"
+        try:
+            path.mkdir()
+            return path
+        except FileExistsError:
+            n += 1
 
 
 def get_device() -> torch.device:
@@ -402,8 +421,8 @@ def plot_test(res: dict, path: Path, model_name: str) -> None:
     a.grid(False)
     for i in range(2):
         for j in range(2):
-            v = cm[i, j].item()
-            a.text(j, i, f"{v}\n({v / cm[i].sum().item():.0%})", ha="center", va="center",
+            v, row = cm[i, j].item(), cm[i].sum().item()
+            a.text(j, i, f"{v}\n({v / row:.0%})" if row else f"{v}", ha="center", va="center",
                    color="#ffffff" if v > cm.max().item() / 2 else INK, fontsize=10)
     a.set_xticks([0, 1], ["NC", "AD"])
     a.set_yticks([0, 1], ["NC", "AD"])
@@ -448,8 +467,7 @@ def main(argv=None):
     set_seed(args.seed)
     device = get_device()
     use_amp = device.type == "cuda" and not args.no_amp
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = next_run_dir(args.out_dir, "run")
     print(f"device={device}  amp={use_amp}  out={out_dir}")
 
     # ---- data ----
@@ -573,7 +591,7 @@ def main(argv=None):
     cost.update(profile_latency(model, device, args.img_size, args.batch_size, use_amp))
 
     summary = {
-        "model": args.model, "best_epoch": best_epoch, "selected_by": args.select,
+        "run_dir": str(out_dir), "model": args.model, "best_epoch": best_epoch, "selected_by": args.select,
         "temperature": T,
         "test": {"slice": metrics["slice"], "subject": metrics["subject"],
                  "loss": metrics["loss"], "uncalibrated_subject": raw["subject"]},

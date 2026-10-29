@@ -20,6 +20,9 @@ What it does
                                  (frequency response of the token mixer)
          predictions.csv         per-patient results and decisions
 
+    Each call writes to a new numbered folder inside the run it evaluates,
+    e.g. runs/run_003/predict_001, predict_002, ... (nothing is overwritten).
+
     It can also be pointed at arbitrary slices with --images (no labels needed).
 
 Evidence heatmap
@@ -34,9 +37,9 @@ Evidence heatmap
     idea applied to GFNet, with no gradients or approximations.
 
 Examples
-    python predict.py --checkpoint runs/gfnet/best.pt
-    python predict.py --checkpoint runs/gfnet/best.pt --target-acc 0.9
-    python predict.py --checkpoint runs/gfnet/best.pt --images path/to/slices/
+    python predict.py                                   # latest run's best.pt
+    python predict.py --checkpoint runs/run_002/best.pt --target-acc 0.9
+    python predict.py --images path/to/slices/
 """
 
 import argparse
@@ -82,7 +85,9 @@ plt.rcParams.update({
 # --------------------------------------------------------------------------- #
 def get_args(argv=None):
     p = argparse.ArgumentParser(description="Run a trained GFNet on ADNI test cases")
-    p.add_argument("--checkpoint", default="runs/gfnet/best.pt")
+    p.add_argument("--checkpoint", default=None,
+                   help="default: best.pt of the latest run in --runs-dir")
+    p.add_argument("--runs-dir", default="runs", help="parent folder of train.py runs")
     p.add_argument("--root", default=None, help="AD_NC folder (default: the one used in training)")
     p.add_argument("--images", nargs="*", default=None,
                    help="predict on these slice files / folders instead of the test set")
@@ -91,7 +96,9 @@ def get_args(argv=None):
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--workers", type=int, default=2)
     p.add_argument("--show", type=int, default=15, help="patients to print in the table")
-    p.add_argument("--out-dir", default=None, help="default: <checkpoint dir>/predict")
+    p.add_argument("--out-dir", default=None,
+                   help="parent folder for results (default: the checkpoint's run folder); "
+                        "each call writes to a new <out-dir>/predict_NNN")
     return p.parse_args(argv)
 
 
@@ -101,6 +108,33 @@ def get_device() -> torch.device:
     if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
+
+
+def next_run_dir(parent, prefix: str) -> Path:
+    """Create and return the next numbered folder <parent>/<prefix>_NNN
+    (run_001, run_002, ...) so earlier results are never overwritten."""
+    parent = Path(parent)
+    parent.mkdir(parents=True, exist_ok=True)
+    nums = [int(m.group(1)) for d in parent.iterdir()
+            if d.is_dir() and (m := re.fullmatch(rf"{prefix}_(\d+)", d.name))]
+    n = max(nums, default=0) + 1
+    while True:
+        path = parent / f"{prefix}_{n:03d}"
+        try:
+            path.mkdir()
+            return path
+        except FileExistsError:
+            n += 1
+
+
+def latest_checkpoint(runs_dir) -> Path:
+    """best.pt of the highest-numbered run_NNN folder."""
+    runs = sorted((d for d in Path(runs_dir).glob("run_*")
+                   if re.fullmatch(r"run_\d+", d.name) and (d / "best.pt").exists()),
+                  key=lambda d: int(d.name.split("_")[1]))
+    if not runs:
+        raise FileNotFoundError(f"No run_NNN/best.pt found in {runs_dir}; pass --checkpoint")
+    return runs[-1] / "best.pt"
 
 
 def load_model(path, device):
@@ -357,15 +391,16 @@ def collect_images(paths):
 def main(argv=None):
     args = get_args(argv)
     device = get_device()
-    model, ckpt = load_model(args.checkpoint, device)
+    ckpt_path = Path(args.checkpoint) if args.checkpoint else latest_checkpoint(args.runs_dir)
+    model, ckpt = load_model(ckpt_path, device)
     T = ckpt.get("temperature", 1.0)
     targs = ckpt["args"]
     img_size = targs["img_size"]
     root = args.root or targs["root"]
-    out_dir = Path(args.out_dir or Path(args.checkpoint).parent / "predict")
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = next_run_dir(args.out_dir or ckpt_path.parent, "predict")
     tf = build_transforms(ckpt["data_stats"]["mean"], ckpt["data_stats"]["std"], img_size, train=False)
 
+    print(f"checkpoint {ckpt_path}  ->  results in {out_dir}")
     print(f"model {ckpt['model_name']} (epoch {ckpt['epoch']}), temperature T={T:.3f}, device {device}")
 
     # referral threshold from validation patients (same split as training)
