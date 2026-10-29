@@ -40,6 +40,7 @@ Examples
     python predict.py                                   # latest run's best.pt
     python predict.py --checkpoint runs/run_002/best.pt --target-acc 0.9
     python predict.py --images path/to/slices/
+    python predict.py --compare                         # table comparing every run in runs/
 """
 
 import argparse
@@ -96,6 +97,8 @@ def get_args(argv=None):
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--workers", type=int, default=2)
     p.add_argument("--show", type=int, default=15, help="patients to print in the table")
+    p.add_argument("--compare", action="store_true",
+                   help="only build a results + resource table across all runs in --runs-dir")
     p.add_argument("--out-dir", default=None,
                    help="parent folder for results (default: the checkpoint's run folder); "
                         "each call writes to a new <out-dir>/predict_NNN")
@@ -386,10 +389,84 @@ def collect_images(paths):
 
 
 # --------------------------------------------------------------------------- #
+# Run comparison
+# --------------------------------------------------------------------------- #
+@torch.no_grad()
+def model_gflops(name: str, img_size: int) -> float:
+    """FLOPs per greyscale slice, 1 MAC = 1 FLOP (paper convention), FFTs excluded."""
+    from torch.utils.flop_counter import FlopCounterMode
+    model = build_model(name, img_size=img_size).eval()
+    with FlopCounterMode(display=False) as fc:
+        model(torch.randn(1, 1, img_size, img_size))
+    return fc.get_total_flops() / 2e9
+
+
+def compare_runs(runs_dir) -> None:
+    """Collect test metrics and resource profiles of every run_NNN into
+    <runs_dir>/comparison.md and comparison.csv."""
+    import json
+    runs_dir = Path(runs_dir)
+    runs = sorted((d for d in runs_dir.glob("run_*") if re.fullmatch(r"run_\d+", d.name)
+                   and (d / "test_metrics.json").exists()), key=lambda d: int(d.name.split("_")[1]))
+    if not runs:
+        raise FileNotFoundError(f"No run_NNN/test_metrics.json found in {runs_dir}")
+
+    def fmt(v, spec):
+        return "-" if v is None else format(v, spec)
+
+    cols = ["Run", "Model", "Best epoch", "Acc (slice)", "Acc (patient)", "AUROC (patient)",
+            "Macro-F1", "Sensitivity", "Specificity", "ECE (cal.)", "AURC",
+            "Params (M)", "GFLOPs", "Peak train VRAM (GB)", "Latency 1 slice (ms)",
+            "Throughput (slices/s)", "Train time (min)", "Device"]
+    rows = []
+    for d in runs:
+        m = json.load(open(d / "test_metrics.json"))
+        s, p, c = m["test"]["slice"], m["test"]["subject"], m.get("cost", {})
+        a = m.get("args", {})
+        bs = c.get("latency_batch_size", a.get("batch_size"))
+        thr = c.get("throughput_slices_per_s")
+        if thr is None and c.get(f"latency_ms_per_batch_bs{bs}"):
+            thr = bs / (c[f"latency_ms_per_batch_bs{bs}"] / 1000)
+        total = c.get("total_train_time_s")
+        if total is None and (d / "history.csv").exists():       # runs saved before profiling
+            with open(d / "history.csv") as f:
+                total = sum(float(r["epoch_time_s"]) for r in csv.DictReader(f))
+        gflops = c.get("gflops_paper")
+        if gflops is None:
+            gflops = model_gflops(m["model"], a.get("img_size", 224))
+        rows.append([
+            d.name, m["model"], str(m["best_epoch"]),
+            fmt(s["accuracy"], ".3f"), fmt(p["accuracy"], ".3f"), fmt(p["auroc"], ".3f"),
+            fmt(p["macro_f1"], ".3f"), fmt(p["sensitivity"], ".3f"), fmt(p["specificity"], ".3f"),
+            fmt(m.get("calibration_subject", {}).get("ece_temperature_scaled"), ".3f"),
+            fmt(m.get("selective_subject", {}).get("aurc"), ".3f"),
+            fmt(c.get("params", 0) / 1e6, ".2f"), fmt(gflops, ".2f"),
+            fmt(c.get("peak_train_vram_gb"), ".2f"), fmt(c.get("latency_ms_per_slice_bs1"), ".2f"),
+            fmt(thr, ",.0f"), fmt(total / 60 if total else None, ".1f"), c.get("device", "-"),
+        ])
+
+    md = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
+    md += ["| " + " | ".join(r) + " |" for r in rows]
+    (runs_dir / "comparison.md").write_text(
+        "# Run comparison (test set)\n\n" + "\n".join(md) + "\n\n"
+        "Acc/AUROC/F1 at 0.5 threshold; patient = mean of slice probabilities. "
+        "GFLOPs per slice, 1 MAC = 1 FLOP (paper convention). '-' = not recorded by that run.\n")
+    with open(runs_dir / "comparison.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(cols)
+        w.writerows(rows)
+    print("\n".join(md))
+    print(f"\nsaved {runs_dir / 'comparison.md'} and comparison.csv")
+
+
+# --------------------------------------------------------------------------- #
 # Main
 # --------------------------------------------------------------------------- #
 def main(argv=None):
     args = get_args(argv)
+    if args.compare:
+        compare_runs(args.runs_dir)
+        return
     device = get_device()
     ckpt_path = Path(args.checkpoint) if args.checkpoint else latest_checkpoint(args.runs_dir)
     model, ckpt = load_model(ckpt_path, device)

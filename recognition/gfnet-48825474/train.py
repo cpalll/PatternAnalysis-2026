@@ -21,6 +21,7 @@ Outputs (in a new numbered folder <--out-dir>/run_NNN, e.g. runs/run_001)
     test_results.png           ROC, reliability, risk-coverage, confusion matrix
     test_metrics.json          all final numbers
     test_predictions.csv       per-patient probabilities for failure-case analysis
+    profile.md                 resource profile: params, FLOPs, peak VRAM, latency, throughput
 
 Example
     python train.py --root /home/groups/comp3710/ADNI/AD_NC --model gfnet-xs \
@@ -45,7 +46,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from dataset import aggregate_by_patient, build_dataloaders  # noqa: E402
-from modules import MODELS, adapt_pretrained_state_dict, build_model  # noqa: E402
+from modules import MODELS, GlobalFilter, adapt_pretrained_state_dict, build_model  # noqa: E402
 
 
 # --------------------------------------------------------------------------- #
@@ -456,7 +457,71 @@ def profile_latency(model, device, img_size: int, batch_size: int, use_amp: bool
         if device.type == "cuda":
             torch.cuda.synchronize()
         out[name] = (time.perf_counter() - t0) / reps * 1000
+    out["latency_batch_size"] = batch_size
+    out["throughput_slices_per_s"] = batch_size / (out[f"latency_ms_per_batch_bs{batch_size}"] / 1000)
     return out
+
+
+@torch.no_grad()
+def count_flops(model, device, img_size: int) -> dict:
+    """FLOPs for one 1 x img_size x img_size slice.
+
+    gflops_paper: PyTorch's FLOP counter / 2, i.e. 1 multiply-add = 1 FLOP, the
+                  convention used in the GFNet paper's tables (comparable to them).
+    fft_gflops_est: analytic estimate for the FFTs and filter products, which the
+                  counter does not see (rfft2 + irfft2 ~ 2 x 2.5 N log2 N real
+                  FLOPs per channel, plus 6 FLOPs per complex product).
+    """
+    from torch.utils.flop_counter import FlopCounterMode
+    model.eval()
+    x = torch.randn(1, 1, img_size, img_size, device=device)
+    with FlopCounterMode(display=False) as fc:
+        model(x)
+    fft = 0.0
+    for m in model.modules():
+        if isinstance(m, GlobalFilter):
+            n, ch = m.h * m.w, m.complex_weight.shape[2]
+            fft += ch * (2 * 2.5 * n * math.log2(n) + 6 * m.h * m.freq_w)
+    return {"gflops_paper": fc.get_total_flops() / 2e9, "fft_gflops_est": fft / 1e9}
+
+
+def environment(device, use_amp: bool) -> dict:
+    """Hardware/software the measurements were taken on."""
+    if device.type == "cuda":
+        name = torch.cuda.get_device_name(device)
+        mem = torch.cuda.get_device_properties(device).total_memory / 2**30
+        dev = f"{name} ({mem:.0f} GB)"
+    else:
+        dev = device.type.upper()
+    return {"device": dev, "mixed_precision": use_amp, "torch": torch.__version__,
+            "cuda": torch.version.cuda if device.type == "cuda" else None}
+
+
+def write_profile(cost: dict, path: Path, model_name: str) -> None:
+    """Resource profile as a Markdown table (pasteable into the README)."""
+    def gb(v, batch):
+        return f"{v:.2f} GB (batch {batch})" if v is not None else "n/a (CUDA only)"
+    bs = cost["latency_batch_size"]
+    rows = [
+        ("Model", model_name),
+        ("Parameters", f"{cost['params'] / 1e6:.2f} M ({cost['params']:,})"),
+        ("FLOPs per slice (1 MAC = 1 FLOP, as in the paper)", f"{cost['gflops_paper']:.2f} G"),
+        ("FFT FLOPs per slice (analytic estimate, not included above)", f"{cost['fft_gflops_est']:.3f} G"),
+        ("Peak GPU VRAM, training", gb(cost["peak_train_vram_gb"], cost["train_batch_size"])),
+        ("Peak GPU VRAM, inference", gb(cost["peak_test_vram_gb"], bs)),
+        ("Inference latency, 1 slice", f"{cost['latency_ms_per_slice_bs1']:.2f} ms"),
+        (f"Inference latency, batch of {bs}", f"{cost[f'latency_ms_per_batch_bs{bs}']:.2f} ms"),
+        ("Inference throughput", f"{cost['throughput_slices_per_s']:,.0f} slices/s"),
+        ("Inference time per patient (20 slices, batched)", f"{20 * 1000 / cost['throughput_slices_per_s']:.1f} ms"),
+        ("Mean epoch time (train + validation)", f"{cost['mean_epoch_time_s']:.1f} s"),
+        ("Total training time", f"{cost['total_train_time_s'] / 60:.1f} min ({cost['epochs_run']} epochs)"),
+        ("Device", cost["device"]),
+        ("Mixed precision (FP16)", "yes" if cost["mixed_precision"] else "no"),
+        ("PyTorch / CUDA", f"{cost['torch']} / {cost['cuda'] or '-'}"),
+    ]
+    lines = [f"# Resource profile: {model_name}", "", "| Metric | Value |", "|---|---|"]
+    lines += [f"| {k} | {v} |" for k, v in rows]
+    path.write_text("\n".join(lines) + "\n")
 
 
 # --------------------------------------------------------------------------- #
@@ -585,10 +650,15 @@ def main(argv=None):
     }
     plot_test(results, out_dir / "test_results.png", args.model)
 
+    total_time = sum(h["epoch_time_s"] for h in history)
     cost = {"params": n_params, "peak_train_vram_gb": peak_train_vram,
-            "peak_test_vram_gb": peak_infer_vram,
-            "mean_epoch_time_s": sum(h["epoch_time_s"] for h in history) / len(history)}
+            "peak_test_vram_gb": peak_infer_vram, "train_batch_size": args.batch_size,
+            "mean_epoch_time_s": total_time / len(history), "total_train_time_s": total_time,
+            "epochs_run": len(history)}
     cost.update(profile_latency(model, device, args.img_size, args.batch_size, use_amp))
+    cost.update(count_flops(model, device, args.img_size))
+    cost.update(environment(device, use_amp))
+    write_profile(cost, out_dir / "profile.md", args.model)
 
     summary = {
         "run_dir": str(out_dir), "model": args.model, "best_epoch": best_epoch, "selected_by": args.select,
@@ -621,6 +691,7 @@ def main(argv=None):
           f"after temperature scaling;  AURC {rc['aurc']:.3f}")
     for c, v in rc["at_coverage"].items():
         print(f"  coverage {c}: accuracy {v['accuracy']:.3f}  (confidence >= {v['threshold']:.3f})")
+    print(f"\n{(out_dir / 'profile.md').read_text()}")
     print(f"saved to {out_dir.resolve()}")
 
 
