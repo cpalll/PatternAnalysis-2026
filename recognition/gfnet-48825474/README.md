@@ -8,7 +8,40 @@ A title, a description of the algorithm and the problem that it solves (approxim
 
 ## Quick Start
 
-Dependencies, address reproducibility of results
+### Dependencies
+
+| Package | Version used | Used for |
+|---|---|---|
+| Python | 3.11 | |
+| PyTorch | 2.13.0 (CUDA 13.0 build, `+cu130`) | Model, training, inference |
+| torchvision | TBC | Data transforms (`transforms.v2`) |
+| Pillow | TBC | Loading JPEG slices |
+| NumPy | TBC | Data loading and plotting only (not used by the model) |
+| matplotlib | TBC | Plots |
+
+```bash
+conda create -n gfnet python=3.11
+conda activate gfnet
+pip install torch==2.13.0 torchvision==<TBC> --index-url https://download.pytorch.org/whl/cu130
+pip install pillow==<TBC> numpy==<TBC> matplotlib==<TBC>
+```
+
+No other libraries are used: the model in `modules.py` is pure PyTorch (no `timm`, no NumPy).
+
+Hardware: results below were produced on a Rangpur NVIDIA A100-PCIE-40GB with mixed precision. GFNet-XS peaks at about 2.2 GB of GPU memory at batch size 64, so any CUDA GPU with 4 GB or more is sufficient (lower `--batch-size` on smaller cards). CPU and Apple Silicon (MPS) also run, much more slowly and without mixed precision.
+
+### Reproducibility
+
+- **Fixed seed.** `--seed` (default 42) seeds Python and PyTorch, and also fixes the patient-level train/validation split, so the same command always uses the same patients in each split.
+- **Fixed held-out test set.** The provided `test/` folder is never used for training, model selection, calibration or choosing the referral threshold; it is evaluated once at the end of each run.
+- **Everything needed to reproduce a run is saved with it.** Each `runs/run_NNN/` stores the full command-line arguments (`test_metrics.json`), the normalisation statistics and fitted temperature (inside `best.pt`), per-epoch history and a `profile.md` recording the GPU, PyTorch and CUDA versions.
+- **Not bit-for-bit deterministic.** GPU kernels (cuDNN, cuFFT) and mixed-precision arithmetic are not fully deterministic, so re-running the same command can differ slightly in the last decimal places of the metrics. Differences between runs smaller than about one patient (0.002 patient-level accuracy) should be treated as noise.
+- **Reproducing the reported run** (`run_004`, GFNet-XS, about 32 minutes on an A100):
+
+```bash
+python train.py --model gfnet-xs --drop-path 0.3 --epochs 40 --batch-size 64 --seed 42 --cache
+python predict.py --checkpoint runs/run_NNN/best.pt
+```
 
 ### Usage
 
