@@ -1,0 +1,148 @@
+{
+  "run_dir": "runs/run_002",
+  "model": "gfnet-xs",
+  "best_epoch": 54,
+  "selected_by": "subj_auc",
+  "temperature": 1.0987728834152222,
+  "test": {
+    "slice": {
+      "n": 9000,
+      "accuracy": 0.7558888888888889,
+      "auroc": 0.8162731623239367,
+      "confusion": [
+        [
+          4113,
+          427
+        ],
+        [
+          1770,
+          2690
+        ]
+      ],
+      "precision_NC": 0.6991330953595104,
+      "recall_NC": 0.9059471365638766,
+      "f1_NC": 0.7892161565768013,
+      "precision_AD": 0.8630093038177735,
+      "recall_AD": 0.6031390134529148,
+      "f1_AD": 0.7100435528573313,
+      "macro_f1": 0.7496298547170663,
+      "sensitivity": 0.6031390134529148,
+      "specificity": 0.9059471365638766
+    },
+    "subject": {
+      "n": 450,
+      "accuracy": 0.78,
+      "auroc": 0.8506351119100768,
+      "confusion": [
+        [
+          214,
+          13
+        ],
+        [
+          86,
+          137
+        ]
+      ],
+      "precision_NC": 0.7133333333333334,
+      "recall_NC": 0.9427312775330396,
+      "f1_NC": 0.8121442125237192,
+      "precision_AD": 0.9133333333333333,
+      "recall_AD": 0.6143497757847534,
+      "f1_AD": 0.7345844504021447,
+      "macro_f1": 0.7733643314629319,
+      "sensitivity": 0.6143497757847534,
+      "specificity": 0.9427312775330396
+    },
+    "loss": 0.6661760210990906,
+    "uncalibrated_subject": {
+      "n": 450,
+      "accuracy": 0.78,
+      "auroc": 0.8502202643171806,
+      "confusion": [
+        [
+          214,
+          13
+        ],
+        [
+          86,
+          137
+        ]
+      ],
+      "precision_NC": 0.7133333333333334,
+      "recall_NC": 0.9427312775330396,
+      "f1_NC": 0.8121442125237192,
+      "precision_AD": 0.9133333333333333,
+      "recall_AD": 0.6143497757847534,
+      "f1_AD": 0.7345844504021447,
+      "macro_f1": 0.7733643314629319,
+      "sensitivity": 0.6143497757847534,
+      "specificity": 0.9427312775330396
+    }
+  },
+  "calibration_subject": {
+    "ece_raw": 0.09126565217433696,
+    "ece_temperature_scaled": 0.07676984155674779
+  },
+  "selective_subject": {
+    "aurc": 0.16597132499713377,
+    "at_coverage": {
+      "1.0": {
+        "accuracy": 0.78,
+        "threshold": 0.5012905502691865
+      },
+      "0.9": {
+        "accuracy": 0.8074074074074074,
+        "threshold": 0.6251681346446276
+      },
+      "0.8": {
+        "accuracy": 0.8277777777777777,
+        "threshold": 0.7357716908678412
+      },
+      "0.7": {
+        "accuracy": 0.8476190476190476,
+        "threshold": 0.8239843115210533
+      },
+      "0.6": {
+        "accuracy": 0.8518518518518519,
+        "threshold": 0.8791766980662942
+      },
+      "0.5": {
+        "accuracy": 0.8533333333333333,
+        "threshold": 0.9060752294957638
+      }
+    }
+  },
+  "cost": {
+    "params": 15404930,
+    "peak_train_vram_gb": 2.2260236740112305,
+    "peak_test_vram_gb": 0.4685654640197754,
+    "mean_epoch_time_s": 47.393711658318836,
+    "latency_ms_per_slice_bs1": 6.251263397280127,
+    "latency_ms_per_batch_bs64": 11.692798649892211
+  },
+  "args": {
+    "root": "/home/groups/comp3710/ADNI/AD_NC",
+    "img_size": 224,
+    "val_frac": 0.2,
+    "batch_size": 64,
+    "workers": 4,
+    "cache": true,
+    "model": "gfnet-xs",
+    "drop_path": 0.1,
+    "drop": 0.0,
+    "pretrained": null,
+    "epochs": 60,
+    "lr": null,
+    "min_lr": 1e-06,
+    "warmup_epochs": 5,
+    "weight_decay": 0.05,
+    "label_smoothing": 0.1,
+    "clip_grad": null,
+    "no_amp": false,
+    "select": "subj_auc",
+    "patience": 15,
+    "seed": 42,
+    "out_dir": "runs",
+    "limit_batches": 0
+  }
+}
