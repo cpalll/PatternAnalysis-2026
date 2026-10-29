@@ -1,25 +1,75 @@
-# Feasibility Review
+# GFNet for classification of Alzheimer's on the ADNI dataset
 
-The chosen model to implement is a GFNet on the ADNI dataset attempting to classify Alzheimer Disease (AD) vs Cognitively Normal (CN) conditions. 
+## About the GFNet model
 
-1. User need, scope, and acceptance criteria
-   1. The model will be used to predict and classify AD vs CN conditions based on input of brain MRI images. The case will be routed to a human for review if the model has low confidence in its classifcation.
-   2. The prototype scope is to evaluate the accuracy of the GFNet model of this purpose by examining its performance, and computational trade-offs against other models for the same purpose.
-   3. Testable criteria include: reduced computational cost compared to another model with similar performance measured in O(f(n)) and FLOPs (e.g. ViTs), 0.8 accuracy on AD vs CN, and max VRAM under 16GB
-2. Model choice and course concepts (HARD difficulty)
-   1. Proposed dataset configuration ADNI: dataset split into train and test (80:20) with each having CN and AD sub-folders
-   2. GFNet architecture: Split image into patches, embed patches, global layer consisting of normalisation and 2D fast fourier transform (FFT), element-wise multiplicaiton between frequency domain features and learnable global filters, inverse FFT to convert back to spatial domain, and finally, a standard feed forward network.
-   3. The original GFNet paper (Rao et al) found  the model to be feasible for classification on the CIFAR datasets.
-   4. Course content on Transformer Neural Networks which is what GFNet's are heavily based off show that it is a suitable model for classification of images as it captures global contextual relationships between all features in the image.
-3. Prelimary feasibility evidence
-   1. ADNI data is adequate
-   2. Rao et al. shows GFNet's efficiency and accuracy on RBG images which provides a reasonable proof that it works on images.
-   3. Due to GFNet's O(L log L) time complexity, an EAIT lab computer with an RTX 2060 should be sufficient for smaller parameter configurations. Otherwise, upgrade to NVIDIa GPU sessions for more compute
-4. Risk, Budget, and fallback
-   1. Technical risks: patient data leakage between training samples, and leakage into test samples during split
-   2. Compute budget: 27 hours of compute on NVIDIA data centre GPUs and queue times on Rangpur
-   3. Fallback: 
-   4. Next planned experiment: Apply GFNet to other medical image classification contexts (e.g. artery size impact on AD vs CN)
+A title, a description of the algorithm and the problem that it solves (approximately a paragraph), how it works in a paragraph, and a figure/visualisation.
+
+
+
+## Quick Start
+
+Dependencies, address reproducibility of results
+
+### Usage
+
+Run all commands from `recognition/gfnet-48825474/`. `--root` points to the `AD_NC` folder (default: `/home/groups/comp3710/ADNI/AD_NC` on Rangpur).
+
+#### Train, validate and test: `train.py`
+
+```bash
+python train.py --root ../../AD_NC --model gfnet-xs --epochs 60 --batch-size 64 --cache
+```
+
+One run trains the model, validates every epoch, keeps the best checkpoint, fits a softmax temperature on the validation set, then evaluates once on the held-out test set.
+
+| Option | Default | Purpose |
+|---|---|---|
+| `--model` | `gfnet-xs` | `gfnet-ti`, `gfnet-xs`, `gfnet-s`, `gfnet-b`, `gfnet-h-ti`, `gfnet-h-s`, `gfnet-h-b` |
+| `--epochs` / `--batch-size` | `60` / `64` | Lower the batch size if GPU memory runs out (the LR scales with it) |
+| `--lr` | `1e-3 x batch/512` | Peak learning rate (warmup then cosine decay) |
+| `--pretrained` | none | Official GFNet ImageNet checkpoint to fine-tune from |
+| `--cache` | off | Decode all slices into RAM once (~2 GB) for faster epochs |
+| `--patience` | `15` | Early-stopping patience in epochs |
+| `--out-dir` | `runs/gfnet` | Where outputs are written |
+| `--limit-batches` | `0` | Debug: cap batches per epoch, e.g. `5` for a quick smoke test |
+
+Outputs in `--out-dir`:
+
+- `best.pt`, `last.pt`: checkpoints (weights, model config, normalisation stats, temperature)
+- `training_curves.png`: loss, accuracy, AUROC/macro-F1 and LR, redrawn every epoch
+- `history.csv`: per-epoch metrics
+- `test_results.png`: ROC, reliability diagram, risk-coverage curve, confusion matrix
+- `test_metrics.json`: final test metrics, calibration, selective-classification and compute cost
+- `test_predictions.csv`: per-patient test probabilities and correctness
+
+#### Predict: `predict.py`
+
+```bash
+python predict.py --checkpoint runs/gfnet/best.pt                        # held-out test set
+python predict.py --checkpoint runs/gfnet/best.pt --target-acc 0.9       # looser referral rule
+python predict.py --checkpoint runs/gfnet/best.pt --images path/to/slices/   # unlabelled slices
+```
+
+Loads the trained model, picks a referral threshold on the validation patients (the lowest confidence at which accuracy on auto-decided patients meets `--target-acc`, default 0.95), then classifies each test patient as AD, NC or REFER (routed to a human examiner). It prints accuracy, coverage, how many errors the referral catches and the least confident patients.
+
+Outputs in `<checkpoint dir>/predict/`:
+
+- `examples.png`: confident, misclassified and referred patients, each with an evidence heatmap (red = evidence for AD, blue = evidence for NC)
+- `confidence.png`: confidence of correct vs incorrect patients with the referral threshold
+- `global_filters.png`: learned global filter magnitudes per block
+- `predictions.csv`: per-patient P(AD), confidence and decision
+
+## Results
+
+Example inputs, outputs, and visual plots of your algorithm.
+
+## Dataset Pre-processing 
+
+Description of any specific pre-processing used, with references if any. Justify your training, validation, and testing splits of the data.
+
+
+
+
 
 ## Core Investigation
 
@@ -37,8 +87,6 @@ Metrics and benchmarks to consider:
 
 ## Engineering Reccomendation
 
-
-
-## Establish empirical confidence threshold or reject option rule that automates ambiguous cases to human specialists. 
+## Establish empirical confidence threshold or reject option rule that automates ambiguous cases to human specialists.
 
 - ## Whether the added complexity and computational cost justifies operational advantage over the baseline.
