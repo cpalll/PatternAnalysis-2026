@@ -1,10 +1,18 @@
 # GFNet for classification of Alzheimer's on the ADNI dataset
 
+This repository implements the GFNet model by Rao et al. and assesses its effectiveness for classifying Alzheimer's disease based on brain MRI scans from the Alzheimer's Disease Neuroimagin Initiative (ADNI) dataset. It covers the full data preparation, training, validation, testing, and evaluation pipeline for the GFNet model. 
+
 ## About the GFNet model
 
-A title, a description of the algorithm and the problem that it solves (approximately a paragraph), how it works in a paragraph, and a figure/visualisation.
+Global Filter Networks (GFNet), introduced by Rao et al. (NeurIPS 2021), are a vision architecture that replaces the self-attention layer of vision transformers with a global filter layer. An input image is divided into non-overlapping 16 x 16 patches, each linearly projected into a token. In every GFNet block, the grid of tokens is transformed into the frequency domain with a 2D fast Fourier transform (FFT), multiplied element-wise by learnable global filters, and transformed back with an inverse FFT. This is equivalent to a depthwise convolution whose kernel spans the whole image, so every token interacts with every other. The cost, however, grows only log-linearly, $O(N \log N)$, rather than quadratically as in attention. A feed-forward network then mixes information across feature channels. On ImageNet, GFNet achieves accuracy competitive with transformer and MLP-style models of similar size, with favourable efficiency, generalisation and robustness.
 
+## GFNet Architecture
 
+### GFNet Advantages
+
+### GFNet Disadvantages
+
+---
 
 ## Quick Start
 
@@ -25,10 +33,6 @@ conda activate gfnet
 pip install torch==2.13.0 torchvision==<TBC> --index-url https://download.pytorch.org/whl/cu130
 pip install pillow==<TBC> numpy==<TBC> matplotlib==<TBC>
 ```
-
-No other libraries are used: the model in `modules.py` is pure PyTorch (no `timm`, no NumPy).
-
-Hardware: results below were produced on a Rangpur NVIDIA A100-PCIE-40GB with mixed precision. GFNet-XS peaks at about 2.2 GB of GPU memory at batch size 64, so any CUDA GPU with 4 GB or more is sufficient (lower `--batch-size` on smaller cards). CPU and Apple Silicon (MPS) also run, much more slowly and without mixed precision.
 
 ### Reproducibility
 
@@ -92,6 +96,10 @@ Outputs in `<checkpoint dir>/predict/`:
 - `global_filters.png`: learned global filter magnitudes per block
 - `predictions.csv`: per-patient P(AD), confidence and decision
 
+## Results
+
+Example inputs, outputs, and visual plots of the GFNet model.
+
 ### Example inputs, outputs and plots
 
 #### Input
@@ -149,10 +157,6 @@ Confidence of correct vs incorrect test patients, with the referral threshold:
 Learned global filters: mean magnitude |K| over channels for each block, across the 2D frequency grid (zero frequency centred vertically).
 
 ![Learned global filters](readme_images/global_filters.png)
-
-## Results
-
-Example inputs, outputs, and visual plots of your algorithm.
 
 ## Dataset Pre-processing
 
