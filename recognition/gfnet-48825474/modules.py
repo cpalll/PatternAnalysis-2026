@@ -12,6 +12,15 @@ Two families are provided, matching the paper:
     GFNetPyramid  hierarchical model with 4 stages and downsampling between them
                   variants: gfnet_h_ti, gfnet_h_s, gfnet_h_b                         (paper Table 4)
 
+A standard convolutional baseline is also provided for comparison:
+
+    BaselineCNN   VGG-style CNN: 4 stages of [Conv3x3-BN-ReLU] x 2 + MaxPool,
+                  global average pooling, linear head                              ("cnn")
+
+All models expose forward_tokens(x) -> (B, N, D) final spatial features before
+pooling, and token_grid = (h, w), so predict.py can draw the same evidence
+heatmaps for every model (head is linear on the average of these features).
+
 Each GFNet block is
 
     x <- x + DropPath( MLP( LN( GlobalFilter( LN(x) ) ) ) )
@@ -303,13 +312,21 @@ class GFNet(nn.Module):
         self.num_classes = num_classes
         self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
-    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
-        """(B, C, H, W) -> pooled features (B, D)."""
+    @property
+    def token_grid(self):
+        return self.patch_embed.grid_size
+
+    def forward_tokens(self, x: torch.Tensor) -> torch.Tensor:
+        """(B, C, H, W) -> normalised final tokens (B, N, D), before pooling."""
         x = self.patch_embed(x)
         x = self.pos_drop(x + self.pos_embed)
         for blk in self.blocks:
             x = blk(x)
-        return self.norm(x).mean(dim=1)
+        return self.norm(x)
+
+    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
+        """(B, C, H, W) -> pooled features (B, D)."""
+        return self.forward_tokens(x).mean(dim=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """(B, C, H, W) -> logits (B, num_classes). Softmax is NOT applied."""
@@ -354,6 +371,7 @@ class GFNetPyramid(nn.Module):
         ])
         self.pos_embed = nn.Parameter(torch.zeros(1, first.num_patches, self.embed_dim[0]))
         self.pos_drop = nn.Dropout(drop_rate)
+        self.token_grid = grids[-1]
 
         dpr = torch.linspace(0, drop_path_rate, sum(depth)).tolist()
         self.blocks = nn.ModuleList()
@@ -385,16 +403,100 @@ class GFNetPyramid(nn.Module):
         self.num_classes = num_classes
         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
 
-    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
+    def forward_tokens(self, x: torch.Tensor) -> torch.Tensor:
+        """(B, C, H, W) -> normalised last-stage tokens (B, N, D), before pooling."""
         for i, (embed, stage) in enumerate(zip(self.patch_embed, self.blocks)):
             x = embed(x)
             if i == 0:
                 x = self.pos_drop(x + self.pos_embed)
             x = stage(x)
-        return self.norm(x).mean(dim=1)
+        return self.norm(x)
+
+    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
+        return self.forward_tokens(x).mean(dim=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.head(self.final_dropout(self.forward_features(x)))
+
+
+# --------------------------------------------------------------------------- #
+# Baseline: standard convolutional network
+# --------------------------------------------------------------------------- #
+class ConvBlock(nn.Module):
+    """[Conv3x3 -> BatchNorm -> ReLU] x 2, then 2x2 max-pooling (halves H and W)."""
+
+    def __init__(self, in_ch: int, out_ch: int):
+        super().__init__()
+        self.body = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.body(x)
+
+
+class BaselineCNN(nn.Module):
+    """Standard VGG-style CNN used as the baseline for GFNet.
+
+    4 ConvBlocks with widths (32, 64, 128, 256): 224 -> 112 -> 56 -> 28 -> 14,
+    so the final feature map is a 14 x 14 grid, the same as GFNet's token grid.
+    Global average pooling -> dropout -> linear head. ~1.2M parameters.
+
+    Only local 3x3 convolutions mix spatial information, so its receptive field
+    grows gradually with depth, in contrast to GFNet's global filters.
+    """
+
+    def __init__(self, img_size=224, in_chans: int = 1, num_classes: int = 2,
+                 widths=(32, 64, 128, 256), drop_rate: float = 0.0, **kwargs):
+        # **kwargs absorbs GFNet-only options (e.g. drop_path_rate) passed by train.py
+        super().__init__()
+        self.num_classes = num_classes
+        self.num_features = widths[-1]
+        chans = (in_chans,) + tuple(widths)
+        self.features = nn.Sequential(*[ConvBlock(chans[i], chans[i + 1])
+                                        for i in range(len(widths))])
+        h, w = _pair(img_size)
+        scale = 2 ** len(widths)
+        if h % scale or w % scale:
+            raise ValueError(f"img_size {(h, w)} must be divisible by {scale}")
+        self.token_grid = (h // scale, w // scale)
+        self.dropout = nn.Dropout(drop_rate) if drop_rate > 0 else nn.Identity()
+        self.head = nn.Linear(self.num_features, num_classes)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.Linear):
+                nn.init.trunc_normal_(m.weight, std=0.02)
+                nn.init.zeros_(m.bias)
+
+    def no_weight_decay(self):
+        return set()
+
+    def forward_tokens(self, x: torch.Tensor) -> torch.Tensor:
+        """(B, C, H, W) -> final feature map as tokens (B, N, D), before pooling."""
+        return self.features(x).flatten(2).transpose(1, 2)
+
+    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
+        return self.forward_tokens(x).mean(dim=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """(B, C, H, W) -> logits (B, num_classes). Softmax is NOT applied."""
+        return self.head(self.dropout(self.forward_features(x)))
+
+
+def baseline_cnn(**kwargs) -> BaselineCNN:
+    """Standard 8-layer VGG-style CNN baseline (~1.2M params)."""
+    return BaselineCNN(**kwargs)
 
 
 # --------------------------------------------------------------------------- #
@@ -446,6 +548,7 @@ def gfnet_h_b(**kwargs) -> GFNetPyramid:
 MODELS = {
     "gfnet-ti": gfnet_ti, "gfnet-xs": gfnet_xs, "gfnet-s": gfnet_s, "gfnet-b": gfnet_b,
     "gfnet-h-ti": gfnet_h_ti, "gfnet-h-s": gfnet_h_s, "gfnet-h-b": gfnet_h_b,
+    "cnn": baseline_cnn,
 }
 
 

@@ -23,6 +23,11 @@ Outputs (in a new numbered folder <--out-dir>/run_NNN, e.g. runs/run_001)
     test_predictions.csv       per-patient probabilities for failure-case analysis
     profile.md                 resource profile: params, FLOPs, peak VRAM, latency, throughput
 
+Baseline
+    --baseline trains the standard CNN baseline (modules.BaselineCNN) instead of
+    GFNet, with the same data loaders, splits, preprocessing, optimiser, schedule,
+    evaluation and outputs, so the two are directly comparable.
+
 Example
     python train.py --root /home/groups/comp3710/ADNI/AD_NC --model gfnet-xs \
         --epochs 60 --batch-size 64 --cache        # -> runs/run_001, runs/run_002, ...
@@ -63,6 +68,8 @@ def get_args(argv=None):
     p.add_argument("--cache", action="store_true", help="decode all images into RAM once")
     # model
     p.add_argument("--model", default="gfnet-xs", choices=sorted(MODELS))
+    p.add_argument("--baseline", action="store_true",
+                   help="train the baseline CNN instead of GFNet (same data and training setup)")
     p.add_argument("--drop-path", type=float, default=0.1)
     p.add_argument("--drop", type=float, default=0.0)
     p.add_argument("--pretrained", default=None, help="official GFNet ImageNet checkpoint (.pth)")
@@ -86,7 +93,10 @@ def get_args(argv=None):
                    help="parent folder; each run is saved to a new <out-dir>/run_NNN")
     p.add_argument("--limit-batches", type=int, default=0,
                    help="debug: cap batches per epoch (0 = no limit)")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    if args.baseline:
+        args.model = "cnn"
+    return args
 
 
 # --------------------------------------------------------------------------- #

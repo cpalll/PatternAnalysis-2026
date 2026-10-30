@@ -9,7 +9,7 @@ Expected layout (course copy at /home/groups/comp3710/ADNI/AD_NC):
       test/AD/...
       test/NC/...
 
-Images are 2D axial T1 slices, greyscale, 240 (H) x 256 (W), ~20 slices per patient.
+Images are 2D sagittal T1 slices, greyscale, 240 (H) x 256 (W), ~20 slices per patient.
 
 Pipeline:
     1. Index every slice with its label and patient ID.

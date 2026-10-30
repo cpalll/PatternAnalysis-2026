@@ -153,25 +153,14 @@ def load_model(path, device):
 # Inference
 # --------------------------------------------------------------------------- #
 def final_tokens(model, x):
-    """Token features after the final LayerNorm, before pooling: (B, N, D).
-    Works for both GFNet and GFNetPyramid."""
-    if isinstance(model.patch_embed, torch.nn.ModuleList):           # pyramid
-        for i, (embed, stage) in enumerate(zip(model.patch_embed, model.blocks)):
-            x = embed(x)
-            if i == 0:
-                x = x + model.pos_embed
-            x = stage(x)
-    else:                                                            # isotropic
-        x = model.patch_embed(x) + model.pos_embed
-        for blk in model.blocks:
-            x = blk(x)
-    return model.norm(x)
+    """Final spatial features before pooling: (B, N, D). Every model in modules.py
+    (GFNet, GFNetPyramid, BaselineCNN) provides forward_tokens."""
+    return model.forward_tokens(x)
 
 
 def last_grid(model):
-    """Token grid (h, w) of the last stage, read from its global filter."""
-    filters = [m for m in model.modules() if isinstance(m, GlobalFilter)]
-    return filters[-1].h, filters[-1].w
+    """Spatial grid (h, w) of the final features."""
+    return tuple(model.token_grid)
 
 
 @torch.no_grad()
@@ -283,7 +272,7 @@ def pick_examples(patients, tau, per_group=2):
     return picked
 
 
-def plot_examples(groups, tau, img_size, path, has_labels=True):
+def plot_examples(groups, tau, img_size, path, has_labels=True, model_name="GFNet"):
     n_rows = len(groups)
     n_cols = max(len(rs) for _, rs in groups)
     fig, axes = plt.subplots(n_rows, n_cols * 2, figsize=(4.4 * n_cols, 2.6 * n_rows),
@@ -310,7 +299,7 @@ def plot_examples(groups, tau, img_size, path, has_labels=True):
     sm = plt.cm.ScalarMappable(cmap=DIVERGING, norm=plt.Normalize(-vmax, vmax))
     cb = fig.colorbar(sm, ax=axes, shrink=0.5, pad=0.01)
     cb.set_label("contribution to logit(AD) - logit(NC)", color=INK2)
-    fig.suptitle(f"GFNet predictions on test patients (referral threshold: confidence < {tau:.2f})",
+    fig.suptitle(f"{model_name} predictions (referral threshold: confidence < {tau:.2f})",
                  color=INK, fontsize=11)
     fig.savefig(path, dpi=130)
     plt.close(fig)
@@ -321,21 +310,20 @@ def plot_confidence(patients, tau, path):
     conf_bad = [r["confidence"] for r in patients if r["pred"] != r["label"]]
     fig, ax = plt.subplots(figsize=(7, 4), constrained_layout=True)
     bins = np.linspace(0.5, 1.0, 21)
-    ax.axvspan(0.5, tau, color=GRID, alpha=0.45, lw=0, zorder=0)
+    ax.axvspan(0.5, tau, color=GRID, alpha=0.45, lw=0, zorder=0, label="Referred to human")
     ax.hist([conf_ok, conf_bad], bins=bins, stacked=True, color=[C1, C2],
             label=[f"Correct (n={len(conf_ok)})", f"Incorrect (n={len(conf_bad)})"],
             edgecolor=SURFACE, linewidth=1.5, zorder=2)
     ax.axvline(tau, color=INK, lw=1, ls="--", label=f"Referral threshold {tau:.2f}", zorder=3)
-    ax.text(0.505, ax.get_ylim()[1] * 0.97, "referred to human", ha="left", va="top",
-            color=INK2, fontsize=8)
-    ax.text(min(tau + 0.005, 0.99), ax.get_ylim()[1] * 0.97, "auto-decided", ha="left", va="top",
-            color=INK2, fontsize=8)
+    if tau < 0.97:
+        ax.text(tau + 0.005, ax.get_ylim()[1] * 0.97, "auto-decided", ha="left", va="top",
+                color=INK2, fontsize=8)
     ax.set(xlabel="Calibrated confidence  max(P(AD), P(NC))", ylabel="Patients", xlim=(0.5, 1.0))
     ax.set_title("Confidence of test patients: correct vs incorrect", pad=24)
     ax.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(integer=True))
     ax.grid(axis="y", color=GRID, lw=0.6)
     ax.set_axisbelow(True)
-    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.0), ncol=3)
+    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.0), ncol=4)
     fig.savefig(path, dpi=150)
     plt.close(fig)
 
@@ -344,6 +332,9 @@ def plot_filters(model, path, max_blocks=12):
     """Mean |K| over channels for each block's global filter. Rows are vertical
     frequency (fft-shifted so 0 is centred), columns horizontal frequency 0..Nyquist."""
     filters = [m for m in model.modules() if isinstance(m, GlobalFilter)]
+    if not filters:
+        print("no global filters in this model (e.g. the CNN baseline); skipping global_filters.png")
+        return False
     idx = np.unique(np.linspace(0, len(filters) - 1, min(max_blocks, len(filters))).round().astype(int))
     n = len(idx)
     cols = min(6, n)
@@ -368,6 +359,7 @@ def plot_filters(model, path, max_blocks=12):
                  color=INK, fontsize=10)
     fig.savefig(path, dpi=150)
     plt.close(fig)
+    return True
 
 
 # --------------------------------------------------------------------------- #
@@ -496,7 +488,8 @@ def main(argv=None):
             dec = LABELS[r["pred"]] if r["confidence"] >= tau else "REFER to human"
             print(f"{r['pid']:>12s} {r['n_slices']:6d} {r['p_ad']:6.3f} {r['confidence']:5.2f}  {dec}")
         groups = [("Predictions", pts[i:i + 3]) for i in range(0, min(len(pts), 9), 3)]
-        plot_examples(groups, tau, img_size, out_dir / "custom_examples.png", has_labels=False)
+        plot_examples(groups, tau, img_size, out_dir / "custom_examples.png", has_labels=False,
+                      model_name=ckpt["model_name"])
         print(f"saved {out_dir / 'custom_examples.png'}")
         return
 
@@ -540,10 +533,13 @@ def main(argv=None):
                         LABELS[r["pred"]], dec, int(r["pred"] == r["label"]),
                         f"{r['slice_std']:.4f}", r["n_slices"]])
 
-    plot_examples(pick_examples(pts, tau), tau, img_size, out_dir / "examples.png")
+    plot_examples(pick_examples(pts, tau), tau, img_size, out_dir / "examples.png",
+                  model_name=ckpt["model_name"])
     plot_confidence(pts, tau, out_dir / "confidence.png")
-    plot_filters(model, out_dir / "global_filters.png")
-    print(f"\nsaved examples.png, confidence.png, global_filters.png, predictions.csv to {out_dir.resolve()}")
+    saved = ["examples.png", "confidence.png", "predictions.csv"]
+    if plot_filters(model, out_dir / "global_filters.png"):
+        saved.insert(2, "global_filters.png")
+    print(f"\nsaved {', '.join(saved)} to {out_dir.resolve()}")
 
 
 if __name__ == "__main__":
