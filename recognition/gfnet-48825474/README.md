@@ -268,22 +268,123 @@ The ADNI (Alzheimer's Disease Neuroimaging Initiative) dataset used here is the 
 2. E. Yagis et al., "Effect of data leakage in brain MRI classification using 2D convolutional neural networks," *Scientific Reports*, vol. 11, 22544, 2021.
 3. Y. Rao, W. Zhao, Z. Zhu, J. Lu, J. Zhou, "Global Filter Networks for Image Classification," *NeurIPS*, 2021. arXiv:2107.00645
 
-## Core Investigation
+---
 
-Metrics and benchmarks to consider: 
+## Investigation of the Open Research Dilemma
 
-- Model architecture's ability to reliably quantify uncertainty on ambiguous boundary cases
-  - Run inference and examine a test case where the outcome is ambiguous, and then compare the classification probability after using softmax.
-- Comparison of performance to a simple baseline
-  - Comparison of the Top-1 accuracy and Top-5 accuracy percentages.
-  - Compare performance to a generic CNN and MLP baseline
-  - Consider the number of parameters and FLOPs required for the different models
-- Correlation of model's predicted confidence score with diagnotic correctness
-  - Comparison of the diagnostic label of the true data versus what the model predicted.
-  - Check for false negative and false positive cases, and measure the degree of incorrectness.
+All results are on the same held-out test set (450 patients, 9,000 slices), with identical patient splits, preprocessing, optimiser and evaluation code. Values are taken from each run's `test_metrics.json` and `profile.md`.
 
-## Engineering Reccomendation
+### Runs compared
 
-## Establish empirical confidence threshold or reject option rule that automates ambiguous cases to human specialists.
+- `run_006` **CNN baseline:** 8-layer VGG-style CNN (`--baseline`), 40 epochs.
+- `run_002` **GFNet-XS (first run):** drop-path 0.1, 60 epochs.
+- `run_004` **GFNet-XS:** drop-path 0.3, 40 epochs. Best GFNet run.
+- `run_005` **GFNet-H-Ti:** hierarchical GFNet with 4 x 4 patches, drop-path 0.3, 40 epochs.
 
-- ## Whether the added complexity and computational cost justifies operational advantage over the baseline.
+### Quantitative benchmark (patient level)
+
+| Model (run) | Accuracy | AD precision | AD recall | AD F1 | NC precision | NC recall | NC F1 | Macro-F1 | AUROC |
+|---|---|---|---|---|---|---|---|---|---|
+| CNN (`run_006`) | 0.753 | 0.938 | 0.538 | 0.684 | 0.680 | 0.965 | 0.798 | 0.741 | **0.877** |
+| GFNet-XS (`run_002`) | 0.780 | 0.913 | 0.614 | 0.735 | 0.713 | 0.943 | **0.812** | 0.773 | 0.851 |
+| GFNet-XS (`run_004`) | **0.782** | 0.888 | **0.641** | **0.745** | **0.723** | 0.921 | 0.810 | **0.777** | 0.848 |
+| GFNet-H-Ti (`run_005`) | 0.749 | 0.882 | 0.570 | 0.692 | 0.686 | 0.925 | 0.788 | 0.740 | 0.829 |
+
+| Model (run) | Slice accuracy | Slice macro-F1 | Slice AUROC |
+|---|---|---|---|
+| CNN (`run_006`) | 0.751 | 0.739 | 0.847 |
+| GFNet-XS (`run_002`) | 0.756 | 0.750 | 0.816 |
+| GFNet-XS (`run_004`) | 0.746 | 0.741 | 0.813 |
+| GFNet-H-Ti (`run_005`) | 0.729 | 0.723 | 0.800 |
+
+- **GFNet-XS vs CNN:** GFNet-XS has the best accuracy (+2.9 points), macro-F1 and AD recall, but the CNN has the best AUROC (0.877 vs 0.848).
+- **First vs second GFNet-XS run:** more regularisation (`run_004`) reduced overfitting (train accuracy 0.985 to 0.949) and caught more AD, but overall accuracy barely moved.
+- **GFNet-H-Ti:** finer 4 x 4 patches did not help; it is worse than GFNet-XS on every metric.
+- **All models miss AD:** AD precision is high (0.88 to 0.94) but AD recall is low (0.54 to 0.64). Errors are mostly false negatives.
+- **Benchmark:** no model reaches 0.8 test accuracy at full coverage (best 0.782 per patient).
+- **Validation is misleading:** validation patient accuracy was 0.92 to 0.98 for every model, far above test. The cause is the data confound described in the autopsies below.
+
+### Confidence vs correctness
+
+| Model (run) | ECE (after temperature scaling) | AURC (lower is better) | Accuracy, 90% auto-decided | Accuracy, 80% auto-decided |
+|---|---|---|---|---|
+| CNN (`run_006`) | 0.182 | **0.130** | 0.780 | 0.817 |
+| GFNet-XS (`run_002`) | 0.077 | 0.166 | 0.807 | **0.828** |
+| GFNet-XS (`run_004`) | **0.056** | 0.151 | 0.805 | 0.822 |
+| GFNet-H-Ti (`run_005`) | 0.091 | 0.165 | 0.778 | 0.794 |
+
+- **Calibration:** GFNet-XS probabilities are the most trustworthy (lowest ECE). The CNN is badly calibrated, and temperature scaling made it worse because its validation set was over-optimistic.
+- **Ranking errors:** the CNN's confidence ranks its errors best (lowest AURC), despite poor calibration.
+- **Referral works:** referring the least confident 10-20% of patients lifts accuracy above 0.8 for both GFNet-XS runs.
+- **Overconfidence remains:** some errors are made at more than 94% confidence, so confidence alone cannot catch every error.
+- **Slice disagreement:** the spread of P(AD) across a patient's 20 slices is twice as high for wrong predictions (median 0.22) as for correct ones (0.10). It is a second ambiguity signal.
+
+### Resource profiling
+
+| Model (run) | Parameters | GFLOPs per slice | Peak VRAM, training | Peak VRAM, inference | Latency, 1 slice | Throughput | Time per patient (20 slices) | Training time |
+|---|---|---|---|---|---|---|---|---|
+| CNN (`run_006`) | **1.17 M** | 2.56 | **1.97 GB** | 0.82 GB | **1.3 ms** | **7,236 slices/s** | **2.8 ms** | **30.3 min** (40 ep) |
+| GFNet-XS (`run_002`) | 15.40 M | 2.79 | 2.23 GB | **0.47 GB** | 6.3 ms | 5,475 slices/s | 3.7 ms | 47.4 min (60 ep) |
+| GFNet-XS (`run_004`) | 15.40 M | 2.79 | 2.23 GB | **0.47 GB** | 6.2 ms | 5,388 slices/s | 3.7 ms | 32.4 min (40 ep) |
+| GFNet-H-Ti (`run_005`) | 14.57 M | **2.03** | 3.58 GB | 0.64 GB | 10.6 ms | 3,066 slices/s | 6.5 ms | 35.0 min (40 ep) |
+
+- All runs: NVIDIA A100 (40 GB), batch size 64, mixed precision (`run_002` did not record the device).
+- **Similar compute:** the CNN and GFNet-XS cost about the same FLOPs, but GFNet-XS has 13 times more parameters and about 5 times the single-slice latency.
+- **FFT is cheap:** the FFTs are about 1% of GFNet-XS's FLOPs.
+- **H-Ti is costlier than its FLOPs suggest:** large early-stage feature maps make it the slowest and most memory-hungry model.
+- **All are lightweight:** every model fits on a 4 GB GPU and classifies a patient in under 7 ms.
+
+### Error autopsies (GFNet-XS, `run_004`)
+
+![Failure cases](readme_images/failure_cases.png)
+
+- **Case 1, patient 1223029 (AD called NC, P(AD) 0.05):** low grey/white matter contrast and a blurred appearance compared with the references. Slices 94-113.
+- **Case 2, patient 1330894 (AD called NC, P(AD) 0.06):** different intensity profile (bright grey matter), also from the 94+ slice range. Every model, CNN included, calls both cases NC with over 87% confidence.
+- **Case 3, patient 1329357 (AD called NC, P(AD) 0.48):** noisy, low-quality slices; individual slices disagree strongly (spread 0.34). A genuinely ambiguous case.
+- **Case 4, patient 1243833 (NC called AD, P(AD) 0.88):** prominent ventricles and sulci that resemble atrophy, plausibly normal ageing. Slices 78-97.
+- **Case 5, patient 1274602 (NC called AD, P(AD) 0.85):** same pattern as case 4; all four models predict AD.
+
+**Root trigger: slice range is confounded with the label in the training data**
+
+| First slice index | Train AD | Train NC | Test AD | Test NC |
+|---|---|---|---|---|
+| < 80 | 353 | 210 | 102 | 62 |
+| 80-89 | 167 | 111 | 67 | 51 |
+| 90 or more | **0** | **235** | **54** | 114 |
+
+- **No AD in training at 90+:** every training patient whose slices start at index 90 or above is NC, and these scans also look different (cases 1 and 2).
+- **Shortcut learning:** the models learn "this kind of scan means NC" instead of atrophy. The test set contains 54 AD patients in this range, and the models miss 47 to 51 of them.
+- **Not architecture-specific:** 76 test patients are misclassified by all four models (70 of them AD). Accuracy is 0.79 to 0.84 for patients below index 90 but only 0.68 to 0.71 at 90 and above.
+- **Explains the validation gap:** validation is drawn from the training folder, so it shares the confound and cannot reveal it.
+- **False positives (cases 4 and 5):** they come mostly from the < 80 range, which is AD-heavy in training, combined with age-related atrophy that genuinely resembles AD.
+
+### Decision rule for routing to human experts
+
+Referral rules applied to GFNet-XS (`run_004`) test predictions:
+
+| Rule: refer the patient if... | Referred | Accuracy on auto-decided | Errors caught |
+|---|---|---|---|
+| Never (no referral) | 0% | 0.782 | 0 / 98 |
+| Confidence < 0.70 | 20% | 0.822 | 34 / 98 |
+| Confidence < 0.80 | 35% | 0.844 | 52 / 98 |
+| 0.2 <= P(AD) < 0.7 | 30% | 0.845 | 49 / 98 |
+| Slice spread > 0.25 | 25% | 0.831 | 41 / 98 |
+| **0.2 <= P(AD) < 0.7, or slice spread > 0.25** | **32%** | **0.850** | **52 / 98** |
+
+- **Recommended rule:** refer when 0.2 <= P(AD) < 0.7 or the slice spread exceeds 0.25. It refers about a third of patients and lifts auto-decided accuracy from 0.78 to 0.85.
+- **Why asymmetric:** most errors are missed AD, so the band leans towards low P(AD) instead of being centred on 0.5.
+- **Why slice spread:** it catches ambiguous cases such as case 3 that confidence alone misses.
+- **Limitation:** about 40 confident false negatives (cases 1 and 2) remain, because the confound makes the model confidently wrong. No threshold can catch them.
+- **Caveat:** these thresholds come from a test-set analysis. In deployment they must be set on held-out data that does not share the confound.
+
+### Engineering recommendation
+
+- **Do not deploy without referral.** No model meets the 0.8 target on its own; with the recommended rule GFNet-XS reaches 0.85 on the 68% of patients it decides automatically.
+- **Fix the data before the model.** Rebuild the training split so every slice range contains both AD and NC, or flag scans from under-represented ranges for review. This targets the cause of most errors; architecture changes did not.
+- **GFNet-XS over the CNN, narrowly.** GFNet-XS gives higher accuracy, sensitivity and macro-F1 and much better calibration, which matters for a referral threshold. The CNN gives better AUROC and error ranking at a thirteenth of the parameters and a fifth of the latency.
+- **Trade-off verdict:** GFNet's added complexity is only weakly justified here. Its cost is modest (under 4 ms per patient, about 2.2 GB to train), but both models share the same dominant failure mode, so the deciding factor is data quality, not architecture.
+- **Not recommended:** GFNet-H-Ti. It is slower, uses more memory and is less accurate than GFNet-XS.
+
+---
+
+## AI Disclosure
