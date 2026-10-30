@@ -6,11 +6,27 @@ This repository implements the GFNet model by Rao et al. and assesses its effect
 
 Global Filter Networks (GFNet), introduced by Rao et al. (NeurIPS 2021), are a vision architecture that replaces the self-attention layer of vision transformers with a global filter layer. An input image is divided into non-overlapping 16 x 16 patches, each linearly projected into a token. In every GFNet block, the grid of tokens is transformed into the frequency domain with a 2D fast Fourier transform (FFT), multiplied element-wise by learnable global filters, and transformed back with an inverse FFT. This is equivalent to a depthwise convolution whose kernel spans the whole image, so every token interacts with every other. The cost, however, grows only log-linearly, $O(N \log N)$, rather than quadratically as in attention. A feed-forward network then mixes information across feature channels. On ImageNet, GFNet achieves accuracy competitive with transformer and MLP-style models of similar size, with favourable efficiency, generalisation and robustness.
 
+---
+
 ## GFNet Architecture
+
+![GFNet architecture](readme_images/gfnet-architecture.png)
+
+- **Patch embedding:** the 224 x 224 slice is split into non-overlapping 16 x 16 patches, and each patch is linearly projected into a token of $D$ channels (384 for GFNet-XS). A learned positional embedding is added, giving a 14 x 14 grid of tokens.
+- **Global filter layer (token mixing):** after LayerNorm, a 2D FFT converts each channel's 14 x 14 token map into the frequency domain. It is multiplied element-wise by a learnable complex global filter, and a 2D inverse FFT converts it back. Every token mixes with every other token at a cost of $O(N \log N)$.
+- **Feed-forward network (channel mixing):** after a second LayerNorm, a two-layer MLP with GELU is applied to each token independently, mixing information across its channels. A residual connection adds the block's input to its output.
+- **Stacking:** the global filter layer and FFN form one GFNet block, repeated $N$ times (12 for GFNet-XS).
+- **Classification head:** the final tokens are normalised and averaged (global average pooling), and a linear layer outputs the AD and NC logits. A softmax converts these into class probabilities.
 
 ### GFNet Advantages
 
+- **Efficient global context:** every patch sees the whole image at $O(N \log N)$ cost, cheaper than attention's $O(N^2)$.
+- **Simple and interpretable:** one learnable filter per channel that can be plotted as a frequency response.
+
 ### GFNet Disadvantages
+
+- **Static filters:** the same mixing is applied to every image, unlike attention, which adapts to each input.
+- **Fixed input size:** filters are tied to the token grid, so other resolutions need interpolation.
 
 ---
 
@@ -38,9 +54,6 @@ pip install pillow==<TBC> numpy==<TBC> matplotlib==<TBC>
 
 - **Fixed seed.** `--seed` (default 42) seeds Python and PyTorch, and also fixes the patient-level train/validation split, so the same command always uses the same patients in each split.
 - **Fixed held-out test set.** The provided `test/` folder is never used for training, model selection, calibration or choosing the referral threshold; it is evaluated once at the end of each run.
-- **Everything needed to reproduce a run is saved with it.** Each `runs/run_NNN/` stores the full command-line arguments (`test_metrics.json`), the normalisation statistics and fitted temperature (inside `best.pt`), per-epoch history and a `profile.md` recording the GPU, PyTorch and CUDA versions.
-- **Not bit-for-bit deterministic.** GPU kernels (cuDNN, cuFFT) and mixed-precision arithmetic are not fully deterministic, so re-running the same command can differ slightly in the last decimal places of the metrics. Differences between runs smaller than about one patient (0.002 patient-level accuracy) should be treated as noise.
-- **Reproducing the reported run** (`run_004`, GFNet-XS, about 32 minutes on an A100):
 
 ```bash
 python train.py --model gfnet-xs --drop-path 0.3 --epochs 40 --batch-size 64 --seed 42 --cache
@@ -95,6 +108,10 @@ Outputs in `<checkpoint dir>/predict/`:
 - `confidence.png`: confidence of correct vs incorrect patients with the referral threshold
 - `global_filters.png`: learned global filter magnitudes per block
 - `predictions.csv`: per-patient P(AD), confidence and decision
+
+
+
+---
 
 ## Results
 
