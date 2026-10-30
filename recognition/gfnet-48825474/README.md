@@ -30,6 +30,48 @@ Global Filter Networks (GFNet), introduced by Rao et al. (NeurIPS 2021), are a v
 
 ---
 
+## Feasibility review
+
+Note: Some decision were changed from this feasibility review for the actual implementation of the code
+
+- Chosen model: GFNet on the ADNI dataset, classifying Alzheimer's Disease (AD) vs Cognitively Normal (CN)
+
+### User need, scope, and acceptance criteria
+
+- **Need:** predict AD vs CN from brain MRI images; route low-confidence cases to a human for review
+- **Prototype scope:** evaluate GFNet accuracy and computational trade-offs against other models for the same task
+- **Acceptance criteria:**
+  - reduced computational cost vs a similar-performing model, measured in $O(f(n))$ and FLOPs (e.g. ViTs)
+  - ≥ 0.8 accuracy on AD vs CN
+  - max VRAM under 16 GB
+
+### Model choice and course concepts (HARD difficulty)
+
+- **Dataset:** ADNI, train/test split 80:20, each with CN and AD sub-folders
+- **GFNet architecture:**
+  - split image into patches and embed them
+  - global layer: normalisation + 2D FFT
+  - element-wise multiplication of frequency-domain features with learnable global filters
+  - inverse FFT back to spatial domain
+  - standard feed-forward network
+- **Paper evidence:** Rao et al. found GFNet feasible for classification on CIFAR
+- **Course link:** Transformer Neural Networks (which GFNets build on) show suitability for image classification via global contextual relationships across features
+
+### Preliminary feasibility evidence
+
+- ADNI data is adequate
+- Rao et al. show GFNet efficiency and accuracy on RGB images — reasonable evidence it works on images
+- $O(L \log L)$ complexity: an EAIT lab RTX 2060 should suffice for smaller configs; otherwise use NVIDIA GPU sessions for more compute
+
+### Risk, budget, and fallback
+
+- **Technical risks:** patient data leakage between training samples, and leakage into the test set during the split
+- **Compute budget:** 27 hours on NVIDIA data-centre GPUs and queue times on Rangpur
+- **Fallback:** *(to be defined)*
+- **Next planned experiment:** apply GFNet to other medical image classification contexts (e.g. artery size impact on AD vs CN)
+
+---
+
 ## Quick Start
 
 ### Dependencies
@@ -160,7 +202,7 @@ ECE 0.066 -> 0.056 after temperature scaling;  AURC 0.151
 #### Output of `predict.py`
 
 - Example run: `run_002`.
-- **`predictions.csv`:** per-patient P(AD), confidence and decision (AD, NC or REFER).
+- `predictions.csv`**:** per-patient P(AD), confidence and decision (AD, NC or REFER).
 
 | patient_id | label | p_ad | confidence | predicted | decision | correct | slice_std |
 |---|---|---|---|---|---|---|---|
