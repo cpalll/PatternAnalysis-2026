@@ -1,0 +1,160 @@
+{
+  "run_dir": "runs/run_006",
+  "model": "cnn",
+  "best_epoch": 36,
+  "selected_by": "subj_auc",
+  "temperature": 0.5343289375305176,
+  "test": {
+    "slice": {
+      "n": 9000,
+      "accuracy": 0.751,
+      "auroc": 0.846715172556844,
+      "confusion": [
+        [
+          4330,
+          210
+        ],
+        [
+          2031,
+          2429
+        ]
+      ],
+      "precision_NC": 0.680710580097469,
+      "recall_NC": 0.9537444933920705,
+      "f1_NC": 0.7944225300431154,
+      "precision_AD": 0.9204244031830239,
+      "recall_AD": 0.5446188340807175,
+      "f1_AD": 0.684321735455698,
+      "macro_f1": 0.7393721327494067,
+      "sensitivity": 0.5446188340807175,
+      "specificity": 0.9537444933920705
+    },
+    "subject": {
+      "n": 450,
+      "accuracy": 0.7533333333333333,
+      "auroc": 0.8766914916734162,
+      "confusion": [
+        [
+          219,
+          8
+        ],
+        [
+          103,
+          120
+        ]
+      ],
+      "precision_NC": 0.6801242236024845,
+      "recall_NC": 0.9647577092511013,
+      "f1_NC": 0.7978142076502732,
+      "precision_AD": 0.9375,
+      "recall_AD": 0.5381165919282511,
+      "f1_AD": 0.6837606837606838,
+      "macro_f1": 0.7407874457054785,
+      "sensitivity": 0.5381165919282511,
+      "specificity": 0.9647577092511013
+    },
+    "loss": 0.6755355596542358,
+    "uncalibrated_subject": {
+      "n": 450,
+      "accuracy": 0.7533333333333333,
+      "auroc": 0.8793188597617589,
+      "confusion": [
+        [
+          219,
+          8
+        ],
+        [
+          103,
+          120
+        ]
+      ],
+      "precision_NC": 0.6801242236024845,
+      "recall_NC": 0.9647577092511013,
+      "f1_NC": 0.7978142076502732,
+      "precision_AD": 0.9375,
+      "recall_AD": 0.5381165919282511,
+      "f1_AD": 0.6837606837606838,
+      "macro_f1": 0.7407874457054785,
+      "sensitivity": 0.5381165919282511,
+      "specificity": 0.9647577092511013
+    }
+  },
+  "calibration_subject": {
+    "ece_raw": 0.135803999111336,
+    "ece_temperature_scaled": 0.18217754355614246
+  },
+  "selective_subject": {
+    "aurc": 0.12984103761433305,
+    "at_coverage": {
+      "1.0": {
+        "accuracy": 0.7533333333333333,
+        "threshold": 0.5082024700939656
+      },
+      "0.9": {
+        "accuracy": 0.7802469135802469,
+        "threshold": 0.7930737358285114
+      },
+      "0.8": {
+        "accuracy": 0.8166666666666667,
+        "threshold": 0.8850135193380992
+      },
+      "0.7": {
+        "accuracy": 0.834920634920635,
+        "threshold": 0.9373182600786094
+      },
+      "0.6": {
+        "accuracy": 0.8481481481481481,
+        "threshold": 0.9643355845444603
+      },
+      "0.5": {
+        "accuracy": 0.8666666666666667,
+        "threshold": 0.9792610913515091
+      }
+    }
+  },
+  "cost": {
+    "params": 1173154,
+    "peak_train_vram_gb": 1.9697990417480469,
+    "peak_test_vram_gb": 0.8180742263793945,
+    "train_batch_size": 64,
+    "mean_epoch_time_s": 45.5242504298687,
+    "total_train_time_s": 1820.970017194748,
+    "epochs_run": 40,
+    "latency_ms_per_slice_bs1": 1.2935738544911146,
+    "latency_ms_per_batch_bs64": 8.844550303183496,
+    "latency_batch_size": 64,
+    "throughput_slices_per_s": 7236.094296050747,
+    "gflops_paper": 2.557772288,
+    "fft_gflops_est": 0.0,
+    "device": "NVIDIA A100-PCIE-40GB (39 GB)",
+    "mixed_precision": true,
+    "torch": "2.13.0+cu130",
+    "cuda": "13.0"
+  },
+  "args": {
+    "root": "/home/groups/comp3710/ADNI/AD_NC",
+    "img_size": 224,
+    "val_frac": 0.2,
+    "batch_size": 64,
+    "workers": 4,
+    "cache": true,
+    "model": "cnn",
+    "baseline": true,
+    "drop_path": 0.1,
+    "drop": 0.0,
+    "pretrained": null,
+    "epochs": 40,
+    "lr": null,
+    "min_lr": 1e-06,
+    "warmup_epochs": 5,
+    "weight_decay": 0.05,
+    "label_smoothing": 0.1,
+    "clip_grad": null,
+    "no_amp": false,
+    "select": "subj_auc",
+    "patience": 15,
+    "seed": 42,
+    "out_dir": "runs",
+    "limit_batches": 0
+  }
+}
