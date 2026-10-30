@@ -62,7 +62,7 @@ python predict.py --checkpoint runs/run_NNN/best.pt
 
 ### Usage
 
-Run all commands from `recognition/gfnet-48825474/`. `--root` points to the `AD_NC` folder (default: `/home/groups/comp3710/ADNI/AD_NC` on Rangpur).
+++Run all commands from++ `recognition/gfnet-48825474/`++.++ `--root` ++points to the++ `AD_NC` ++folder (default:++ `/home/groups/comp3710/ADNI/AD_NC` ++on Rangpur).++
 
 #### Train, validate and test: `train.py`
 
@@ -75,6 +75,7 @@ One run trains the model, validates every epoch, keeps the best checkpoint, fits
 | Option | Default | Purpose |
 |---|---|---|
 | `--model` | `gfnet-xs` | `gfnet-ti`, `gfnet-xs`, `gfnet-s`, `gfnet-b`, `gfnet-h-ti`, `gfnet-h-s`, `gfnet-h-b` |
+| `--baseline` | off | Train the baseline CNN instead, on the same data and training setup |
 | `--epochs` / `--batch-size` | `60` / `64` | Lower the batch size if GPU memory runs out (the LR scales with it) |
 | `--lr` | `1e-3 x batch/512` | Peak learning rate (warmup then cosine decay) |
 | `--pretrained` | none | Official GFNet ImageNet checkpoint to fine-tune from |
@@ -91,6 +92,12 @@ Outputs in `--out-dir`:
 - `test_results.png`: ROC, reliability diagram, risk-coverage curve, confusion matrix
 - `test_metrics.json`: final test metrics, calibration, selective-classification and compute cost
 - `test_predictions.csv`: per-patient test probabilities and correctness
+
+Baseline CNN for comparison (same splits, preprocessing, optimiser and evaluation):
+
+```bash
+python train.py --baseline --epochs 40 --cache
+```
 
 #### Predict: `predict.py`
 
@@ -109,8 +116,6 @@ Outputs in `<checkpoint dir>/predict/`:
 - `global_filters.png`: learned global filter magnitudes per block
 - `predictions.csv`: per-patient P(AD), confidence and decision
 
-
-
 ---
 
 ## Results
@@ -121,7 +126,7 @@ Example inputs, outputs, and visual plots of the GFNet model.
 
 #### Input
 
-Each patient is 20 greyscale 2D sagittal MRI slices (240 x 256 JPEG, named `{patientID}_{sliceIdx}.jpeg`). Slices are centre-cropped to 224 x 224 and normalised with training-set statistics before entering the model.
+- 20 greyscale sagittal slices per patient (240 x 256), cropped to 224 x 224 and normalised.
 
 | AD (patient 393968, slice 98) | NC (patient 1356105, slice 98) |
 |---|---|
@@ -129,7 +134,8 @@ Each patient is 20 greyscale 2D sagittal MRI slices (240 x 256 JPEG, named `{pat
 
 #### Output of `train.py`
 
-Example from `run_004` (`--model gfnet-xs --drop-path 0.3 --epochs 40`, best epoch 39, temperature T = 1.08). End of the console output:
+- Example run: `run_004` (GFNet-XS, drop-path 0.3, 40 epochs).
+- Console summary of the test results:
 
 ```
 TEST (subject level, n=450): acc 0.782  AUROC 0.848  macro-F1 0.777  sens 0.641  spec 0.921
@@ -143,17 +149,18 @@ ECE 0.066 -> 0.056 after temperature scaling;  AURC 0.151
   coverage 0.5: accuracy 0.871  (confidence >= 0.867)
 ```
 
-Training curves (redrawn every epoch): loss, accuracy against the 0.8 target, validation AUROC and macro-F1, and the learning-rate schedule.
+- **Training curves:** tracks loss, accuracy, validation AUROC/macro-F1 and learning rate per epoch.
 
 ![Training curves](readme_images/train_curves.png)
 
-Test results: ROC curves, calibration (reliability) before and after temperature scaling, risk-coverage curve for referral, and the patient-level confusion matrix.
+- **Test results:** ROC, calibration, risk-coverage for referral, and the confusion matrix.
 
 ![Test results](readme_images/test_results.png)
 
 #### Output of `predict.py`
 
-Example from `run_002` (`predict_001`). Each test patient gets P(AD) (mean of its 20 slice probabilities, temperature-calibrated), a confidence `max(P(AD), P(NC))`, and a decision: AD, NC, or REFER when confidence is below the referral threshold chosen on validation data. Excerpt of `predictions.csv`:
+- Example run: `run_002`.
+- **`predictions.csv`:** per-patient P(AD), confidence and decision (AD, NC or REFER).
 
 | patient_id | label | p_ad | confidence | predicted | decision | correct | slice_std |
 |---|---|---|---|---|---|---|---|
@@ -163,15 +170,15 @@ Example from `run_002` (`predict_001`). Each test patient gets P(AD) (mean of it
 | 1261605 | NC | 0.8883 | 0.8883 | AD | AD | 0 | 0.1075 |
 | 1220298 | AD | 0.5012 | 0.5012 | AD | REFER | 1 | 0.3371 |
 
-Representative patients (confident correct AD and NC, false negatives, false positives and referred cases), each with an evidence heatmap. The AD-vs-NC logit splits exactly into one contribution per 16 x 16 patch: red patches push towards AD, blue towards NC.
+- **Example patients:** correct, misclassified and referred cases with evidence heatmaps (red = AD, blue = NC).
 
 ![Prediction examples](readme_images/predict_examples.png)
 
-Confidence of correct vs incorrect test patients, with the referral threshold:
+- **Confidence distribution:** whether confidence separates correct from incorrect predictions.
 
 ![Confidence distribution](readme_images/predict_confidence.png)
 
-Learned global filters: mean magnitude |K| over channels for each block, across the 2D frequency grid (zero frequency centred vertically).
+- **Learned global filters:** filter strength per block across frequencies.
 
 ![Learned global filters](readme_images/global_filters.png)
 
@@ -191,26 +198,27 @@ The ADNI (Alzheimer's Disease Neuroimaging Initiative) dataset used here is the 
 | Validation (20% of `train/`) | 104 (2,080) | 111 (2,220) |
 | Test (provided `test/`) | 223 (4,460) | 227 (4,540) |
 
-- Patients are split, not slices: all 20 slices of a patient sit in one split, so the model is never tested on a person it trained on. Slice-level splitting inflates accuracy through data leakage [2]. A check in `dataset.py` fails if any patient ID appears in two splits.
-- The validation split is stratified by class, so it keeps the training AD/NC ratio, and it is fixed by `--seed`.
-- Validation is used for early stopping, model selection, temperature scaling and choosing the referral threshold; the provided test set is used once, for final evaluation only.
-- Caveat: patient identity comes from the filename prefix. If a prefix identifies a scan rather than a person, repeat visits of one person could be split across train and validation, which would make validation optimistic.
+- **Split by patient:** all slices of a patient stay in one split, avoiding data leakage [2].
+- **Stratified validation:** keeps the AD/NC ratio, fixed by `--seed`.
+- **Validation use:** early stopping, model selection, calibration and the referral threshold.
+- **Test use:** final evaluation only, run once.
+- **Caveat:** IDs may identify scans rather than people, which could make validation optimistic.
 
 ### Intensity normalisation
 
-- Pixels are scaled to [0, 1], then standardised with the mean and standard deviation of the training split only, so no validation or test information leaks into preprocessing.
-- The same statistics are saved in the checkpoint and reused at inference.
+- **Train-only statistics:** standardises intensities without leaking validation or test data.
+- **Reused at inference:** stored in the checkpoint for consistent predictions.
 
 ### Cropping to 224 x 224
 
-- Training uses a random crop, evaluation a centre crop. The removed margin (16 rows, 32 columns) is background.
-- 224 is the input size of the original GFNet [3] and a multiple of the 16 x 16 patch size, giving the 14 x 14 token grid the global filters operate on.
+- **Removes background only:** random crop for training, centre crop for evaluation.
+- **Matches GFNet:** 224 is the paper's input size [3], giving a 14 x 14 token grid.
 
 ### Data augmentation (training only)
 
-- Small random rotations (up to 10 degrees), shifts (up to 5%), scaling (0.95 to 1.05) and brightness/contrast jitter (up to 10%) mimic natural variation in head position and scanner intensity, reducing overfitting.
-- No horizontal flips: Alzheimer's-related atrophy can be asymmetric, so mirroring could change the anatomy being classified.
-- No Mixup or CutMix (used in the paper's ImageNet recipe [3]): blended images and labels would distort the softmax confidence that the referral analysis relies on.
+- **Small rotations, shifts, scaling and intensity jitter:** mimic scan variation to reduce overfitting.
+- **No horizontal flips:** atrophy can be asymmetric.
+- **No Mixup/CutMix:** would distort the confidence used for referral [3].
 
 **References**
 
