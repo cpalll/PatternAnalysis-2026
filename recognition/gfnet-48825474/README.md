@@ -388,3 +388,10 @@ Referral rules applied to GFNet-XS (`run_004`) test predictions:
 ---
 
 ## AI Disclosure
+
+- Usage of AI models was primarily through Claude Opus 5.5 via the Cowork feature. 
+  - The workflow to solve the problem with the assitance of AI was roughly as follows: discuss a concept from the original research paper and understand its application (e.g. embedding of patches into Fourier space) -> using AI to make changes to the codebase to implement this specific concept -> self-run the code and evaluate results (without AI)
+  - Interpretation of model results was analyzed by a human before verifying each assumption with the AI
+  - All test runs were manually done rather than AI automating the running of the code
+- Verification responsibility
+  - By using the above workflow all metrics and architectural decisions are 100% overlooked by the developer. The AI could make recommendations on which alternatives are possible, but the final decision was made by a human.
